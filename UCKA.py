@@ -2,7 +2,8 @@ import math
 from dataclasses import dataclass
 import matplotlib.pyplot as plt
 import networkx as nx
-
+import csv
+import os
 
 
 @dataclass
@@ -14,6 +15,42 @@ class No:
     distancia_bs: float = 0.0
     omega: float = 0.0
     tipo: str = ""
+
+
+def salvar_dataset_csv(estatisticas, caminho_csv='teste_1000_peso_canto.csv'):
+    criar_cabecalho = not os.path.exists(caminho_csv)
+
+    with open(caminho_csv, 'a', newline='') as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=[
+            'rodada', 'num_CHs_anteriores', 'num_CHs_novos', 'CHs_mantidos',
+            'total_mortos', 'bateria_restante'  # <-- alterado aqui
+        ])
+        if criar_cabecalho:
+            writer.writeheader()
+
+        linha = {
+            'rodada': estatisticas['rodada'],
+            'num_CHs_anteriores': len(estatisticas['CHs_anteriores']),
+            'num_CHs_novos': len(estatisticas['CHs_novos']),
+            'CHs_mantidos': len(set(estatisticas['CHs_anteriores']).intersection(estatisticas['CHs_novos'])),
+            'total_mortos': estatisticas['total_mortos'],  # <-- alterado aqui
+            'bateria_restante': estatisticas['bateria_restante']
+        }
+        writer.writerow(linha)
+
+
+def extrair_estatisticas_rodada(rodada, CHs_anteriores, CHs_novos, mortos_acumulados, bateria):
+    return {
+        'rodada': rodada,
+        'CHs_anteriores': CHs_anteriores,
+        'CHs_novos': CHs_novos,
+        'CHs_mantidos': len(set(CHs_anteriores).intersection(CHs_novos)),
+        'total_mortos': len(mortos_acumulados),
+        'bateria_restante': bateria_total_restante(bateria)
+    }
+
+
+
 
 def euclideana(p1, p2):
     return math.hypot(p1[0] - p2[0], p1[1] - p2[1])
@@ -91,9 +128,9 @@ def eleger_CHs(nos, vizinhos, alpha=0.5, beta=0.5):
     return CHs
 def limite_membros(tipo, total):
     if tipo == 'small':
-        return max(1, math.ceil(0.05 * total))
+        return max(1, math.ceil(0.025 * total))
     elif tipo == 'medium':
-        return max(1, math.ceil(0.15 * total))
+        return max(1, math.ceil(0.10 * total))
     else:
         return max(1, math.ceil(0.30 * total))
 
@@ -164,7 +201,7 @@ def conectar_CHs_ate_bs(nos, CHs, bs_pos):
 
     return interligacoes, bs_links
 
-def visualizar_ucka(nos, CHs, clusters, edges, bs_pos):
+def visualizar_ucka(nos, CHs, clusters, edges, bs_pos, mortos=None):
     fig, ax = plt.subplots(figsize=(10, 10))
 
     ch_list = list(clusters.keys())
@@ -172,7 +209,8 @@ def visualizar_ucka(nos, CHs, clusters, edges, bs_pos):
     ch_cor = {ch: cores(i % 20) for i, ch in enumerate(ch_list)}
     formatos = {'small': '^', 'medium': 's', 'large': 'o'}
 
-    # Intra-cluster MSTs
+    mortos = set(mortos) if mortos else set()
+
     for ch, membros in clusters.items():
         cor = ch_cor[ch]
         for u, v in edges:
@@ -181,7 +219,6 @@ def visualizar_ucka(nos, CHs, clusters, edges, bs_pos):
                 x2, y2 = nos[v].x, nos[v].y
                 ax.plot([x1, x2], [y1, y2], color=cor, linewidth=2)
 
-    # Inter-CH and CH→BS links
     inter, bs_links = conectar_CHs_ate_bs(nos, CHs, bs_pos)
 
     for u, v in inter:
@@ -196,19 +233,25 @@ def visualizar_ucka(nos, CHs, clusters, edges, bs_pos):
         ax.plot([x1, x2], [y1, y2], color='black', linestyle='dashed', linewidth=1.5)
 
     for no in nos:
-        if no.indice in CHs:
-            ax.scatter(no.x, no.y, c='black', s=200, marker='o', label='CH' if no.indice == list(CHs)[0] else "")
+        if no.indice in mortos:
+            ax.scatter(no.x, no.y, c='black', s=100, marker='x')
+        elif no.indice in CHs:
+            ax.scatter(no.x, no.y, c='white', edgecolors='black', s=200, marker='o', zorder=5)
         else:
             dono = next((ch for ch, membros in clusters.items() if no.indice in membros), None)
             cor = ch_cor.get(dono, 'gray')
             ax.scatter(no.x, no.y, c=[cor], s=100, marker=formatos[no.tipo])
 
-    ax.scatter(*bs_pos, c='yellow', s=300, marker='*', label='Base Station')
-    ax.set_title('UCKA – Visualização dos Clusters')
+    # Base Station: estrela amarela com borda preta
+    ax.scatter(*bs_pos, facecolor='yellow', edgecolor='black', s=300, marker='*', zorder=10, label='Base Station')
+
+    ax.set_title('UCKA – Visualização dos Clusters (rodada 0)')
     ax.grid(True)
     plt.axis('equal')
     plt.tight_layout()
     plt.show()
+
+
 
 def calcular_graus(nos, vizinhos):
     for i, viz in enumerate(vizinhos):
@@ -646,14 +689,16 @@ def bateria_total_restante(bateria):
 
 
 
-def main(metodo_reeleicao='round_robin'):
-    path = 'Cenário 4 - Rede 100.txt'
+def main(metodo_reeleicao):
+    path = 'sensores.txt'
     coords = ler_coords_arquivo(path)
-    bs_pos = (400, 200)
+    bs_pos = bs_pos = (1,1)
     energia_inicial = 50.0
     tx_range = 150
-    max_rounds = 2500
+    max_rounds = 10000000
     alpha, beta = 0.5, 0.5
+    mortos_acumulados = set()
+
 
     nos = inicializar_nos(coords, energia_inicial, bs_pos)
     viz = construir_vizinhos(nos, tx_range)
@@ -690,11 +735,17 @@ def main(metodo_reeleicao='round_robin'):
         print(f"→ Nós que morreram nesta rodada: {sorted(mortos_rodada)}")
         total_bateria = bateria_total_restante(bateria)
         print(f"🔋 Bateria total restante na rede: {total_bateria:.4f} J")
+        mortos_acumulados.update(mortos_rodada)
+        estat = extrair_estatisticas_rodada(
+        rodada, CHs_anteriores, CHs_novos, mortos_acumulados, bateria)
+        salvar_dataset_csv(estat)
+
+
 
         novos_mortos = [m for m in mortos_rodada if m not in mortos_plotados]
         if novos_mortos:
             arestas_atual = coletar_arestas_intracluster(clusters, nos)
-            visualizar_ucka(nos, set(clusters.keys()), clusters, arestas_atual, bs_pos)
+            
             mortos_plotados.update(novos_mortos)
             print(f"🕯️ Novos mortos visualizados: {novos_mortos}")
 
@@ -707,7 +758,7 @@ def main(metodo_reeleicao='round_robin'):
         print(f"   * Fração de CHs que mudaram: {frac:.2%}")
         if disparar:
             arestas_atual = coletar_arestas_intracluster(clusters, nos)
-            visualizar_ucka(nos, CHs_novos, clusters, arestas_atual, bs_pos)
+        
 
         prev_CHs = CHs_novos
 
@@ -720,4 +771,4 @@ def main(metodo_reeleicao='round_robin'):
 
 if __name__ == "__main__":
     # Escolha entre 'peso' e 'round_robin'
-    main(metodo_reeleicao='round_robin')
+    main(metodo_reeleicao='peso')
