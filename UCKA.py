@@ -277,8 +277,6 @@ def ler_coords_arquivo(path):
         return []
     
 
-import networkx as nx
-
 def construir_mst_cluster(cluster_nodes, nos):
     """
     Recebe a lista de índices `cluster_nodes` (por exemplo [CH, m1, m2, ...])
